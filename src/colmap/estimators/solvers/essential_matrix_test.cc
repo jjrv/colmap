@@ -131,6 +131,26 @@ INSTANTIATE_TEST_SUITE_P(EssentialMatrixEightPointEstimator,
 class EssentialMatrixSphericalEightPointEstimatorTests
     : public ::testing::TestWithParam<size_t> {};
 
+TEST(EssentialMatrixSphericalEightPointEstimator,
+     ResidualsUseProjectedEpipolarError) {
+  Eigen::Matrix3d E;
+  E << 0, -1, 0,
+       1,  0, 0,
+       0,  0, 0;
+
+  const std::vector<Eigen::Vector3d> rays1 = {
+      Eigen::Vector3d(1, 0, 1).normalized()};
+  const std::vector<Eigen::Vector3d> rays2 = {
+      Eigen::Vector3d(0, 1, 1).normalized()};
+
+  std::vector<double> residuals;
+  EssentialMatrixSphericalEightPointEstimator::Residuals(
+      rays1, rays2, E, &residuals);
+
+  ASSERT_EQ(residuals.size(), 1);
+  EXPECT_NEAR(residuals[0], 0.5, 1e-12);
+}
+
 TEST_P(EssentialMatrixSphericalEightPointEstimatorTests, Nominal) {
   const size_t kNumRays = GetParam();
   for (size_t k = 0; k < 1; ++k) {

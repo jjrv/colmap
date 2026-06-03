@@ -38,6 +38,11 @@
 #include <Eigen/LU>
 #include <Eigen/SVD>
 
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <limits>
+
 namespace colmap {
 
 void EssentialMatrixFivePointEstimator::Estimate(
@@ -207,6 +212,39 @@ void EssentialMatrixEightPointEstimator::Residuals(
 
 namespace {
 
+double ComputeSquaredProjectedEpipolarError(const Eigen::Vector3d& ray1,
+                                            const Eigen::Vector3d& ray2,
+                                            const Eigen::Matrix3d& E) {
+  const Eigen::Vector3d epipolar_plane1 = E.transpose() * ray2;
+  const double numerator = ray2.dot(E * ray1);
+  const double denominator = ray1.squaredNorm() * epipolar_plane1.squaredNorm();
+  if (denominator == 0) {
+    return std::numeric_limits<double>::max();
+  }
+  return numerator * numerator / denominator;
+}
+
+void ComputeSquaredProjectedEpipolarError(
+    const std::vector<Eigen::Vector3d>& rays1,
+    const std::vector<Eigen::Vector3d>& rays2,
+    const Eigen::Matrix3d& E,
+    std::vector<double>* residuals) {
+  const size_t num_rays1 = rays1.size();
+  THROW_CHECK_EQ(num_rays1, rays2.size());
+  residuals->resize(num_rays1);
+  for (size_t i = 0; i < num_rays1; ++i) {
+    (*residuals)[i] =
+        ComputeSquaredProjectedEpipolarError(rays1[i], rays2[i], E);
+  }
+}
+
+struct SphericalNormalizationModel {
+  double S = 1.0;
+  double K = 1.0;
+  double score = std::numeric_limits<double>::max();
+  Eigen::Matrix3d E = Eigen::Matrix3d::Zero();
+};
+
 // Run the standard 8-point algorithm on normalized bearing vectors and
 // denormalize the resulting essential matrix.
 Eigen::Matrix3d EstimateAndDenormalize(
@@ -252,8 +290,75 @@ Eigen::Matrix3d EstimateAndDenormalize(
   E_hat = svd.matrixU() * singular_values.asDiagonal() *
           svd.matrixV().transpose();
 
-  // Denormalize: E = N^T * E_hat * N.
+  // Denormalize: E = N^T * E_hat * N. Since N is diagonal, N^T = N.
   return N * E_hat * N;
+}
+
+SphericalNormalizationModel EvaluateSphericalNormalization(
+    const std::vector<Eigen::Vector3d>& rays1,
+    const std::vector<Eigen::Vector3d>& rays2,
+    const double S,
+    const double K) {
+  constexpr double kMinScale = 1e-3;
+  constexpr double kMaxScale = 1e3;
+  SphericalNormalizationModel model;
+  if (S < kMinScale || K < kMinScale || S > kMaxScale || K > kMaxScale) {
+    return model;
+  }
+
+  const Eigen::DiagonalMatrix<double, 3> N(Eigen::Vector3d(S, S, K));
+  model.S = S;
+  model.K = K;
+  model.E = EstimateAndDenormalize(rays1, rays2, N);
+
+  std::vector<double> residuals;
+  ComputeSquaredProjectedEpipolarError(rays1, rays2, model.E, &residuals);
+  model.score = 0.0;
+  for (const double residual : residuals) {
+    model.score += residual;
+  }
+  if (!std::isfinite(model.score)) {
+    model.score = std::numeric_limits<double>::max();
+  }
+  return model;
+}
+
+void RefineSphericalNormalization(const std::vector<Eigen::Vector3d>& rays1,
+                                  const std::vector<Eigen::Vector3d>& rays2,
+                                  SphericalNormalizationModel* best_model) {
+  double step_S = 0.5;
+  double step_K = 0.5;
+  constexpr double kMinStep = 1e-3;
+  constexpr int kMaxNumIterations = 32;
+
+  for (int iter = 0; iter < kMaxNumIterations; ++iter) {
+    SphericalNormalizationModel iteration_best = *best_model;
+    for (const double delta_S : {-step_S, 0.0, step_S}) {
+      for (const double delta_K : {-step_K, 0.0, step_K}) {
+        if (delta_S == 0.0 && delta_K == 0.0) {
+          continue;
+        }
+        const SphericalNormalizationModel candidate =
+            EvaluateSphericalNormalization(rays1,
+                                           rays2,
+                                           best_model->S + delta_S,
+                                           best_model->K + delta_K);
+        if (candidate.score < iteration_best.score) {
+          iteration_best = candidate;
+        }
+      }
+    }
+
+    if (iteration_best.score < best_model->score) {
+      *best_model = iteration_best;
+    } else {
+      step_S *= 0.5;
+      step_K *= 0.5;
+      if (std::max(step_S, step_K) < kMinStep) {
+        break;
+      }
+    }
+  }
 }
 
 }  // namespace
@@ -268,37 +373,26 @@ void EssentialMatrixSphericalEightPointEstimator::Estimate(
 
   models->clear();
 
-  // Grid search over spherical normalization parameters S and K.
+  // Initialize and refine spherical normalization parameters S and K.
   // S controls XY expansion, K controls Z expansion.
   const std::array<double, 3> kScaleCandidates = {0.5, 1.0, 2.0};
 
-  Eigen::Matrix3d best_E;
-  double best_score = std::numeric_limits<double>::max();
+  SphericalNormalizationModel best_model =
+      EvaluateSphericalNormalization(cam_rays1, cam_rays2, 1.0, 1.0);
 
   for (const double S : kScaleCandidates) {
     for (const double K : kScaleCandidates) {
-      const Eigen::DiagonalMatrix<double, 3> N(
-          Eigen::Vector3d(S, S, K));
-      const Eigen::Matrix3d E =
-          EstimateAndDenormalize(cam_rays1, cam_rays2, N);
-
-      // Score using sum of squared Sampson errors.
-      std::vector<double> residuals;
-      ComputeSquaredSampsonError(cam_rays1, cam_rays2, E, &residuals);
-      double score = 0.0;
-      for (const double r : residuals) {
-        score += r;
-      }
-
-      if (score < best_score) {
-        best_score = score;
-        best_E = E;
+      const SphericalNormalizationModel candidate =
+          EvaluateSphericalNormalization(cam_rays1, cam_rays2, S, K);
+      if (candidate.score < best_model.score) {
+        best_model = candidate;
       }
     }
   }
+  RefineSphericalNormalization(cam_rays1, cam_rays2, &best_model);
 
   models->resize(1);
-  (*models)[0] = best_E;
+  (*models)[0] = best_model.E;
 }
 
 void EssentialMatrixSphericalEightPointEstimator::Residuals(
@@ -306,7 +400,7 @@ void EssentialMatrixSphericalEightPointEstimator::Residuals(
     const std::vector<Y_t>& cam_rays2,
     const M_t& E,
     std::vector<double>* residuals) {
-  ComputeSquaredSampsonError(cam_rays1, cam_rays2, E, residuals);
+  ComputeSquaredProjectedEpipolarError(cam_rays1, cam_rays2, E, residuals);
 }
 
 }  // namespace colmap

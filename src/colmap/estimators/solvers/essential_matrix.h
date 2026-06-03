@@ -127,8 +127,8 @@ class EssentialMatrixEightPointEstimator {
 //
 // This algorithm improves the classic 8-PA for spherical cameras by applying
 // a non-rigid normalization N = diag(S, S, K) to bearing vectors before DLT,
-// then denormalizing the result. The optimal S and K are found via grid search
-// over the normalized epipolar constraint residuals.
+// then denormalizing the result. The S and K parameters are initialized with a
+// coarse search and locally refined over the projected epipolar residuals.
 //
 // Based on: Solarte et al., "Redesigning the Normalized 8-point Algorithm for
 // 360-FoV Images", ICRA 2021.
@@ -142,7 +142,8 @@ class EssentialMatrixSphericalEightPointEstimator {
   static const int kMinNumSamples = 8;
 
   // Estimate essential matrix from corresponding camera rays using spherical
-  // normalization. The best S and K parameters are selected via grid search.
+  // normalization. The best S and K parameters are selected by minimizing the
+  // projected epipolar residuals.
   //
   // @param cam_rays1  First set of corresponding rays.
   // @param cam_rays2  Second set of corresponding rays.
@@ -155,7 +156,7 @@ class EssentialMatrixSphericalEightPointEstimator {
   // Calculate the residuals of a set of corresponding rays and a given
   // essential matrix.
   //
-  // Residuals are defined as the squared Sampson error.
+  // Residuals are defined as the squared projected epipolar error.
   //
   // @param cam_rays1  First set of corresponding rays.
   // @param cam_rays2  Second set of corresponding rays.

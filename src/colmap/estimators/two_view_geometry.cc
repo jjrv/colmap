@@ -689,23 +689,28 @@ TwoViewGeometry EstimateCalibratedTwoViewGeometry(
     std::vector<char> inlier_mask;
   };
 
-  auto RunEssentialRANSAC = [&]<typename LocalEstimator>() -> EpiReport {
-    LORANSAC<EssentialMatrixFivePointEstimator, LocalEstimator> ransac(
-        E_ransac_options);
-    auto report = ransac.Estimate(matched_cam_rays1, matched_cam_rays2);
-    EpiReport result;
-    result.success = report.success;
-    result.model = report.model;
-    result.support = report.support;
-    result.inlier_mask = std::move(report.inlier_mask);
-    return result;
-  };
-
-  const EpiReport E_report = is_equirectangular_pair
-      ? RunEssentialRANSAC.template operator()<
-            EssentialMatrixSphericalEightPointEstimator>()
-      : RunEssentialRANSAC.template operator()<
-            EssentialMatrixFivePointEstimator>();
+  EpiReport E_report;
+  if (is_equirectangular_pair) {
+    LORANSAC<EssentialMatrixFivePointEstimator,
+             EssentialMatrixSphericalEightPointEstimator>
+        E_ransac(E_ransac_options);
+    const auto report =
+        E_ransac.Estimate(matched_cam_rays1, matched_cam_rays2);
+    E_report.success = report.success;
+    E_report.model = report.model;
+    E_report.support = report.support;
+    E_report.inlier_mask = std::move(report.inlier_mask);
+  } else {
+    LORANSAC<EssentialMatrixFivePointEstimator,
+             EssentialMatrixFivePointEstimator>
+        E_ransac(E_ransac_options);
+    const auto report =
+        E_ransac.Estimate(matched_cam_rays1, matched_cam_rays2);
+    E_report.success = report.success;
+    E_report.model = report.model;
+    E_report.support = report.support;
+    E_report.inlier_mask = std::move(report.inlier_mask);
+  }
   geometry.E = E_report.model;
 
   LORANSAC<FundamentalMatrixSevenPointEstimator,
@@ -1025,11 +1030,11 @@ bool MaybeFitMissingTwoViewGeometryMatrix(
       }
       if (valid_cam_rays1.size() <
           static_cast<size_t>(
-              EssentialMatrixSphericalEightPointEstimator::kMinNumSamples)) {
+              EssentialMatrixEightPointEstimator::kMinNumSamples)) {
         return false;
       }
       std::vector<Eigen::Matrix3d> models;
-      EssentialMatrixSphericalEightPointEstimator::Estimate(
+      EssentialMatrixEightPointEstimator::Estimate(
           valid_cam_rays1, valid_cam_rays2, &models);
       if (models.empty()) {
         return false;
