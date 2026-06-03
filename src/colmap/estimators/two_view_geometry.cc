@@ -320,7 +320,9 @@ TwoViewGeometry EstimateTwoViewGeometry(
   } else if (options.force_H_use) {
     return EstimateCalibratedHomography(
         camera1, points1, camera2, points2, matches, options);
-  } else if (camera1.has_prior_focal_length && camera2.has_prior_focal_length) {
+  } else if ((camera1.has_prior_focal_length && camera2.has_prior_focal_length) ||
+             (CameraModelIsEquirectangular(camera1.model_id) &&
+              CameraModelIsEquirectangular(camera2.model_id))) {
     return EstimateCalibratedTwoViewGeometry(
         camera1, points1, camera2, points2, matches, options);
   } else {
@@ -493,17 +495,17 @@ void ExtractInlierCamRays(const Camera& camera1,
   inlier_cam_rays2->resize(inlier_matches.size());
   for (size_t i = 0; i < inlier_matches.size(); ++i) {
     const FeatureMatch& match = inlier_matches[i];
-    if (const std::optional<Eigen::Vector2d> cam_point1 =
-            camera1.CamFromImg(points1[match.point2D_idx1]);
-        cam_point1) {
-      (*inlier_cam_rays1)[i] = cam_point1->homogeneous().normalized();
+    if (const std::optional<Eigen::Vector3d> cam_ray1 =
+            camera1.CamRayFromImg(points1[match.point2D_idx1]);
+        cam_ray1) {
+      (*inlier_cam_rays1)[i] = *cam_ray1;
     } else {
       (*inlier_cam_rays1)[i].setZero();
     }
-    if (const std::optional<Eigen::Vector2d> cam_point2 =
-            camera2.CamFromImg(points2[match.point2D_idx2]);
-        cam_point2) {
-      (*inlier_cam_rays2)[i] = cam_point2->homogeneous().normalized();
+    if (const std::optional<Eigen::Vector3d> cam_ray2 =
+            camera2.CamRayFromImg(points2[match.point2D_idx2]);
+        cam_ray2) {
+      (*inlier_cam_rays2)[i] = *cam_ray2;
     } else {
       (*inlier_cam_rays2)[i].setZero();
     }
@@ -647,17 +649,17 @@ TwoViewGeometry EstimateCalibratedTwoViewGeometry(
     const point2D_t idx2 = matches[i].point2D_idx2;
     matched_img_points1[i] = points1[idx1];
     matched_img_points2[i] = points2[idx2];
-    if (const std::optional<Eigen::Vector2d> cam_point1 =
-            camera1.CamFromImg(points1[idx1]);
-        cam_point1) {
-      matched_cam_rays1[i] = cam_point1->homogeneous().normalized();
+    if (const std::optional<Eigen::Vector3d> cam_ray1 =
+            camera1.CamRayFromImg(points1[idx1]);
+        cam_ray1) {
+      matched_cam_rays1[i] = *cam_ray1;
     } else {
       matched_cam_rays1[i].setZero();
     }
-    if (const std::optional<Eigen::Vector2d> cam_point2 =
-            camera2.CamFromImg(points2[idx2]);
-        cam_point2) {
-      matched_cam_rays2[i] = cam_point2->homogeneous().normalized();
+    if (const std::optional<Eigen::Vector3d> cam_ray2 =
+            camera2.CamRayFromImg(points2[idx2]);
+        cam_ray2) {
+      matched_cam_rays2[i] = *cam_ray2;
     } else {
       matched_cam_rays2[i].setZero();
     }

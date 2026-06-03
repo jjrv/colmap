@@ -133,7 +133,7 @@ if(NOT FETCH_POSELIB)
     find_package(PoseLib ${COLMAP_FIND_TYPE})
 endif()
 
-if(NOT FETCH_FAISS)
+if(FALSE AND NOT FETCH_FAISS)
     find_package(faiss ${COLMAP_FIND_TYPE})
 endif()
 

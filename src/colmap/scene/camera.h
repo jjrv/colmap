@@ -131,6 +131,13 @@ struct Camera {
   inline std::optional<Eigen::Vector2d> CamFromImg(
       const Eigen::Vector2d& image_point) const;
 
+  // Project point in image plane to unit camera ray.
+  // For standard cameras, this is equivalent to
+  // CamFromImg(...).homogeneous().normalized().
+  // For equirectangular cameras, it returns the true full-sphere 3D ray.
+  inline std::optional<Eigen::Vector3d> CamRayFromImg(
+      const Eigen::Vector2d& image_point) const;
+
   // Convert pixel threshold in image plane to camera frame.
   inline double CamFromImgThreshold(double threshold) const;
 
@@ -262,6 +269,11 @@ bool Camera::HasBogusParams(const double min_focal_length_ratio,
 std::optional<Eigen::Vector2d> Camera::CamFromImg(
     const Eigen::Vector2d& image_point) const {
   return CameraModelCamFromImg(model_id, params, image_point);
+}
+
+std::optional<Eigen::Vector3d> Camera::CamRayFromImg(
+    const Eigen::Vector2d& image_point) const {
+  return CameraModelCamRayFromImg(model_id, params, image_point);
 }
 
 double Camera::CamFromImgThreshold(const double threshold) const {

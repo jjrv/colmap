@@ -412,15 +412,26 @@ size_t ObservationManager::FilterObservationsWithNegativeDepth() {
     for (const data_t& data_id : reconstruction_.Frame(frame_id).ImageIds()) {
       const Image& image = reconstruction_.Image(data_id.id);
       const Eigen::Matrix3x4d cam_from_world = image.CamFromWorld().ToMatrix();
+      const Camera& camera = reconstruction_.Camera(image.CameraId());
       for (point2D_t point2D_idx = 0; point2D_idx < image.NumPoints2D();
            ++point2D_idx) {
         const Point2D& point2D = image.Point2D(point2D_idx);
         if (point2D.HasPoint3D()) {
           const struct Point3D& point3D =
               reconstruction_.Point3D(point2D.point3D_id);
-          if (!HasPointPositiveDepth(cam_from_world, point3D.xyz)) {
-            DeleteObservation(data_id.id, point2D_idx);
-            num_filtered += 1;
+          if (CameraModelIsEquirectangular(camera.model_id)) {
+            const std::optional<Eigen::Vector3d> cam_ray =
+                camera.CamRayFromImg(point2D.xy);
+            if (!cam_ray || !HasPointConsistentRayDirection(
+                                 cam_from_world, point3D.xyz, *cam_ray)) {
+              DeleteObservation(data_id.id, point2D_idx);
+              num_filtered += 1;
+            }
+          } else {
+            if (!HasPointPositiveDepth(cam_from_world, point3D.xyz)) {
+              DeleteObservation(data_id.id, point2D_idx);
+              num_filtered += 1;
+            }
           }
         }
       }
@@ -534,25 +545,32 @@ size_t ObservationManager::FilterPoints3DWithLargeReprojectionError(
           break;
         }
         case ReprojectionErrorType::NORMALIZED: {
-          const Eigen::Vector3d point3D_in_cam =
-              image.CamFromWorld() * point3D.xyz;
-          constexpr double kMinDepth = 1e-12;
-          if (point3D_in_cam.z() < kMinDepth) {
-            should_filter = true;
-            break;
+          if (CameraModelIsEquirectangular(camera.model_id)) {
+            const double error = CalculateAngularReprojectionError(
+                point2D.xy, point3D.xyz, image.CamFromWorld(), camera);
+            should_filter = error > max_angular_error_rad;
+            observation_error = RadToDeg(error);
+          } else {
+            const Eigen::Vector3d point3D_in_cam =
+                image.CamFromWorld() * point3D.xyz;
+            constexpr double kMinDepth = 1e-12;
+            if (point3D_in_cam.z() < kMinDepth) {
+              should_filter = true;
+              break;
+            }
+            const std::optional<Eigen::Vector2d> cam_point =
+                camera.CamFromImg(point2D.xy);
+            if (!cam_point.has_value()) {
+              should_filter = true;
+              break;
+            }
+            const Eigen::Vector2d reproj_point =
+                point3D_in_cam.hnormalized().head<2>();
+            const double squared_error =
+                (reproj_point - *cam_point).squaredNorm();
+            should_filter = squared_error > max_squared_error;
+            observation_error = std::sqrt(squared_error);
           }
-          const std::optional<Eigen::Vector2d> cam_point =
-              camera.CamFromImg(point2D.xy);
-          if (!cam_point.has_value()) {
-            should_filter = true;
-            break;
-          }
-          const Eigen::Vector2d reproj_point =
-              point3D_in_cam.hnormalized().head<2>();
-          const double squared_error =
-              (reproj_point - *cam_point).squaredNorm();
-          should_filter = squared_error > max_squared_error;
-          observation_error = std::sqrt(squared_error);
           break;
         }
         case ReprojectionErrorType::ANGULAR: {

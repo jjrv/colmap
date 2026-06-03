@@ -89,4 +89,17 @@ double CalculateAngularReprojectionError(
 bool HasPointPositiveDepth(const Eigen::Matrix3x4d& cam_from_world,
                            const Eigen::Vector3d& point3D);
 
+// Check if a triangulated point is consistent with the observed camera ray.
+// For equirectangular cameras, this replaces the positive-depth check because
+// the camera observes the full sphere.
+//
+// @param cam_from_world  3x4 projection matrix.
+// @param point3D         3D point as 3x1 vector.
+// @param cam_ray         Observed unit camera ray.
+//
+// @return                True if point lies in the same hemisphere as the ray.
+bool HasPointConsistentRayDirection(const Eigen::Matrix3x4d& cam_from_world,
+                                    const Eigen::Vector3d& point3D,
+                                    const Eigen::Vector3d& cam_ray);
+
 }  // namespace colmap

@@ -36,6 +36,8 @@
 #include "colmap/util/eigen_alignment.h"
 #include "colmap/util/logging.h"
 
+#include <array>
+
 #include <Eigen/Geometry>
 
 namespace colmap {
@@ -58,13 +60,23 @@ void TriangulationEstimator::Estimate(const std::vector<X_t>& point_data,
   if (point_data.size() == 2) {
     // Two-view triangulation.
     M_t xyz;
-    if (TriangulatePoint(pose_data[0].cam_from_world,
-                         pose_data[1].cam_from_world,
-                         point_data[0].cam_point,
-                         point_data[1].cam_point,
-                         &xyz) &&
-        HasPointPositiveDepth(pose_data[0].cam_from_world, xyz) &&
-        HasPointPositiveDepth(pose_data[1].cam_from_world, xyz) &&
+    const std::array<Eigen::Matrix3x4d, 2> cams_from_world = {
+        pose_data[0].cam_from_world, pose_data[1].cam_from_world};
+    const std::array<Eigen::Vector3d, 2> cam_rays = {
+        point_data[0].cam_ray, point_data[1].cam_ray};
+    if (TriangulateMultiViewPoint(
+            span<const Eigen::Matrix3x4d>(cams_from_world.data(),
+                                          cams_from_world.size()),
+            span<const Eigen::Vector3d>(cam_rays.data(), cam_rays.size()),
+            &xyz) &&
+        (CameraModelIsEquirectangular(pose_data[0].camera->model_id)
+             ? HasPointConsistentRayDirection(
+                   pose_data[0].cam_from_world, xyz, point_data[0].cam_ray)
+             : HasPointPositiveDepth(pose_data[0].cam_from_world, xyz)) &&
+        (CameraModelIsEquirectangular(pose_data[1].camera->model_id)
+             ? HasPointConsistentRayDirection(
+                   pose_data[1].cam_from_world, xyz, point_data[1].cam_ray)
+             : HasPointPositiveDepth(pose_data[1].cam_from_world, xyz)) &&
         CalculateTriangulationAngle(pose_data[0].proj_center,
                                     pose_data[1].proj_center,
                                     xyz) >= min_tri_angle_) {
@@ -76,25 +88,32 @@ void TriangulationEstimator::Estimate(const std::vector<X_t>& point_data,
     // Multi-view triangulation.
 
     std::vector<Eigen::Matrix3x4d> cams_from_world(point_data.size());
-    std::vector<Eigen::Vector2d> cam_points(point_data.size());
+    std::vector<Eigen::Vector3d> cam_rays(point_data.size());
     for (size_t i = 0; i < point_data.size(); ++i) {
       cams_from_world[i] = pose_data[i].cam_from_world;
-      cam_points[i] = point_data[i].cam_point;
+      cam_rays[i] = point_data[i].cam_ray;
     }
 
     M_t xyz;
     if (!TriangulateMultiViewPoint(
             span<const Eigen::Matrix3x4d>(cams_from_world.data(),
                                           cams_from_world.size()),
-            span<const Eigen::Vector2d>(cam_points.data(), cam_points.size()),
+            span<const Eigen::Vector3d>(cam_rays.data(), cam_rays.size()),
             &xyz)) {
       return;
     }
 
     // Check for cheirality constraint.
-    for (const auto& pose : pose_data) {
-      if (!HasPointPositiveDepth(pose.cam_from_world, xyz)) {
-        return;
+    for (size_t i = 0; i < pose_data.size(); ++i) {
+      if (CameraModelIsEquirectangular(pose_data[i].camera->model_id)) {
+        if (!HasPointConsistentRayDirection(
+                pose_data[i].cam_from_world, xyz, point_data[i].cam_ray)) {
+          return;
+        }
+      } else {
+        if (!HasPointPositiveDepth(pose_data[i].cam_from_world, xyz)) {
+          return;
+        }
       }
     }
 
@@ -130,9 +149,7 @@ void TriangulationEstimator::Residuals(const std::vector<X_t>& point_data,
                                             *pose_data[i].camera);
     } else if (residual_type_ == ResidualType::ANGULAR_ERROR) {
       const double angular_error = CalculateAngularReprojectionError(
-          point_data[i].cam_point.homogeneous().normalized(),
-          xyz,
-          pose_data[i].cam_from_world);
+          point_data[i].cam_ray, xyz, pose_data[i].cam_from_world);
       (*residuals)[i] = angular_error * angular_error;
     }
   }
@@ -163,6 +180,13 @@ bool EstimateTriangulation(const EstimateTriangulationOptions& options,
       point_data[i].cam_point = *cam_point;
     } else {
       point_data[i].cam_point.setZero();
+    }
+    if (const std::optional<Eigen::Vector3d> cam_ray =
+            cameras[i]->CamRayFromImg(points[i]);
+        cam_ray) {
+      point_data[i].cam_ray = *cam_ray;
+    } else {
+      point_data[i].cam_ray.setZero();
     }
     pose_data[i].cam_from_world = cams_from_world[i].ToMatrix();
     pose_data[i].proj_center = cams_from_world[i].TgtOriginInSrc();

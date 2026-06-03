@@ -36,6 +36,11 @@ model that is complex enough to model the distortion effects:
 - ``EUCM``: Use this camera model for wide-angle fisheye cameras and catadioptric
   systems. It represents radial distortion using two
   parameters in addition to the standard pinhole parameters.
+- ``EQUIRECTANGULAR``: Use this camera model for 360-degree equirectangular
+  (ERP) panoramas. The model maps spherical coordinates (longitude, latitude)
+  directly to image pixels. All viewing directions are valid, so there are no
+  principal-ray constraints. The ``SPHERE`` alias is also accepted for
+  compatibility with some external tools.
 
 You can inspect the estimated intrinsic parameters by double-clicking specific
 images in the model viewer or by exporting the model and opening the

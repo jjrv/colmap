@@ -359,5 +359,27 @@ TEST(Camera, Rescale) {
   EXPECT_EQ(camera.PrincipalPointY(), 2);
 }
 
+TEST(Camera, CamRayFromImg) {
+  Camera pinhole =
+      Camera::CreateFromModelId(1, CameraModelId::kPinhole, 1.0, 100, 100);
+  const Eigen::Vector2d img_point(50, 50);
+  const auto cam_ray = pinhole.CamRayFromImg(img_point);
+  ASSERT_TRUE(cam_ray.has_value());
+  const auto cam_point = pinhole.CamFromImg(img_point);
+  ASSERT_TRUE(cam_point.has_value());
+  EXPECT_NEAR(cam_ray->x(), cam_point->homogeneous().normalized().x(), 1e-10);
+  EXPECT_NEAR(cam_ray->y(), cam_point->homogeneous().normalized().y(), 1e-10);
+  EXPECT_NEAR(cam_ray->z(), cam_point->homogeneous().normalized().z(), 1e-10);
+
+  Camera erp = Camera::CreateFromModelId(
+      1, CameraModelId::kEquirectangular, 1.0, 2048, 1024);
+  const auto erp_ray = erp.CamRayFromImg(Eigen::Vector2d(1024, 512));
+  ASSERT_TRUE(erp_ray.has_value());
+  EXPECT_NEAR(erp_ray->norm(), 1.0, 1e-10);
+  EXPECT_NEAR(erp_ray->x(), 0.0, 1e-6);
+  EXPECT_NEAR(erp_ray->y(), 0.0, 1e-6);
+  EXPECT_NEAR(erp_ray->z(), 1.0, 1e-6);
+}
+
 }  // namespace
 }  // namespace colmap

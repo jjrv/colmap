@@ -83,6 +83,19 @@ bool TriangulateMultiViewPoint(
     const span<const Eigen::Vector2d>& cam_points,
     Eigen::Vector3d* point3D);
 
+// Triangulate point from multiple views minimizing the L2 error using
+// pre-computed 3D camera rays. This variant supports equirectangular cameras.
+//
+// @param cams_from_world   Projection matrices of multi-view observations.
+// @param cam_rays          Unit camera rays of multi-view observations.
+// @param point3D           Triangulated 3D point.
+//
+// @return                  Whether triangulation was successful.
+bool TriangulateMultiViewPoint(
+    const span<const Eigen::Matrix3x4d>& cams_from_world,
+    const span<const Eigen::Vector3d>& cam_rays,
+    Eigen::Vector3d* point3D);
+
 // Triangulate optimal 3D point from corresponding image point observations by
 // finding the optimal image observations.
 //

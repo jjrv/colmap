@@ -130,6 +130,31 @@ bool TriangulateMultiViewPoint(
   return true;
 }
 
+bool TriangulateMultiViewPoint(
+    const span<const Eigen::Matrix3x4d>& cams_from_world,
+    const span<const Eigen::Vector3d>& cam_rays,
+    Eigen::Vector3d* xyz) {
+  THROW_CHECK_EQ(cams_from_world.size(), cam_rays.size());
+  THROW_CHECK_NOTNULL(xyz);
+
+  Eigen::Matrix4d A = Eigen::Matrix4d::Zero();
+  for (size_t i = 0; i < cam_rays.size(); i++) {
+    const Eigen::Matrix3x4d term = cams_from_world[i] -
+                                   cam_rays[i] * cam_rays[i].transpose() *
+                                       cams_from_world[i];
+    A += term.transpose() * term;
+  }
+
+  const Eigen::SelfAdjointEigenSolver<Eigen::Matrix4d> eigen_solver(A);
+  if (eigen_solver.info() != Eigen::Success ||
+      eigen_solver.eigenvectors()(3, 0) == 0) {
+    return false;
+  }
+
+  *xyz = eigen_solver.eigenvectors().col(0).hnormalized();
+  return true;
+}
+
 bool TriangulateOptimalPoint(const Eigen::Matrix3x4d& cam1_from_world_mat,
                              const Eigen::Matrix3x4d& cam2_from_world_mat,
                              const Eigen::Vector2d& cam_point1,

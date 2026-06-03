@@ -227,6 +227,51 @@ class ReprojErrorCostFunctor
   const Eigen::Vector2d point2D_;
 };
 
+// Seam-aware specialization for equirectangular cameras.
+// The horizontal residual is wrapped to the shortest path across the image seam.
+template <>
+class ReprojErrorCostFunctor<EquirectangularCameraModel>
+    : public AutoDiffCostFunctor<ReprojErrorCostFunctor<EquirectangularCameraModel>,
+                                 2,
+                                 3,
+                                 7,
+                                 EquirectangularCameraModel::num_params> {
+ public:
+  explicit ReprojErrorCostFunctor(const Eigen::Vector2d& point2D)
+      : point2D_(point2D) {}
+
+  template <typename T>
+  bool operator()(const T* const point3D_in_world,
+                  const T* const cam_from_world,
+                  const T* const camera_params,
+                  T* residuals) const {
+    const Eigen::Matrix<T, 3, 1> point3D_in_cam =
+        EigenQuaternionMap<T>(cam_from_world) *
+            EigenVector3Map<T>(point3D_in_world) +
+        EigenVector3Map<T>(cam_from_world + 4);
+    Eigen::Map<Eigen::Matrix<T, 2, 1>> residuals_vec(residuals);
+    if (EquirectangularCameraModel::ImgFromCam(camera_params,
+                                               point3D_in_cam[0],
+                                               point3D_in_cam[1],
+                                               point3D_in_cam[2],
+                                               &residuals[0],
+                                               &residuals[1])) {
+      const T width = camera_params[0] * T(2.0 * EIGEN_PI);
+      const T half_width = width / T(2.0);
+      T dx = residuals[0] - T(point2D_.x());
+      dx = dx - width * ceres::floor((dx + half_width) / width);
+      residuals_vec(0) = dx;
+      residuals_vec(1) -= T(point2D_.y());
+    } else {
+      residuals_vec.setZero();
+    }
+    return true;
+  }
+
+ private:
+  const Eigen::Vector2d point2D_;
+};
+
 // Bundle adjustment cost function for variable
 // camera calibration and point parameters, and fixed camera pose.
 

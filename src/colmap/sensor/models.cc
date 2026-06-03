@@ -100,7 +100,13 @@ bool ExistsCameraModelWithId(const CameraModelId model_id) {
 }
 
 CameraModelId CameraModelNameToId(const std::string& model_name) {
-  const auto it = kCameraModelNameToId.find(model_name);
+  std::string normalized_name = model_name;
+  // Accept "SPHERE" as an alias for the equirectangular model for
+  // compatibility with older SphereSfM models.
+  if (normalized_name == "SPHERE") {
+    normalized_name = "EQUIRECTANGULAR";
+  }
+  const auto it = kCameraModelNameToId.find(normalized_name);
   if (it == kCameraModelNameToId.end()) {
     return CameraModelId::kInvalid;
   } else {

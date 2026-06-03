@@ -64,12 +64,11 @@ double CalculateAngularReprojectionError(const Eigen::Vector2d& point2D,
                                          const Eigen::Vector3d& point3D,
                                          const Rigid3d& cam_from_world,
                                          const Camera& camera) {
-  const std::optional<Eigen::Vector2d> cam_point = camera.CamFromImg(point2D);
-  if (!cam_point) {
+  const std::optional<Eigen::Vector3d> cam_ray = camera.CamRayFromImg(point2D);
+  if (!cam_ray) {
     return EIGEN_PI;
   }
-  return CalculateAngularReprojectionError(
-      cam_point->homogeneous().normalized(), point3D, cam_from_world);
+  return CalculateAngularReprojectionError(*cam_ray, point3D, cam_from_world);
 }
 
 double CalculateAngularReprojectionError(
@@ -77,12 +76,11 @@ double CalculateAngularReprojectionError(
     const Eigen::Vector3d& point3D,
     const Eigen::Matrix3x4d& cam_from_world,
     const Camera& camera) {
-  const std::optional<Eigen::Vector2d> cam_point = camera.CamFromImg(point2D);
-  if (!cam_point) {
+  const std::optional<Eigen::Vector3d> cam_ray = camera.CamRayFromImg(point2D);
+  if (!cam_ray) {
     return EIGEN_PI;
   }
-  return CalculateAngularReprojectionError(
-      cam_point->homogeneous().normalized(), point3D, cam_from_world);
+  return CalculateAngularReprojectionError(*cam_ray, point3D, cam_from_world);
 }
 
 double CalculateAngularReprojectionError(const Eigen::Vector3d& cam_ray,
@@ -106,6 +104,13 @@ bool HasPointPositiveDepth(const Eigen::Matrix3x4d& cam_from_world,
                            const Eigen::Vector3d& point3D) {
   return cam_from_world.row(2).dot(point3D.homogeneous()) >=
          std::numeric_limits<double>::epsilon();
+}
+
+bool HasPointConsistentRayDirection(const Eigen::Matrix3x4d& cam_from_world,
+                                    const Eigen::Vector3d& point3D,
+                                    const Eigen::Vector3d& cam_ray) {
+  const Eigen::Vector3d point3D_in_cam = cam_from_world * point3D.homogeneous();
+  return cam_ray.dot(point3D_in_cam) >= std::numeric_limits<double>::epsilon();
 }
 
 }  // namespace colmap

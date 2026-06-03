@@ -422,5 +422,65 @@ TEST(EUCMCamera, RejectsInvalidExtraParams) {
       1.0));
 }
 
+TEST(EquirectangularCamera, Nominal) {
+  const std::vector<double> params =
+      EquirectangularCameraModel::InitializeParams(1.0, 2048, 1024);
+  EXPECT_EQ(params.size(), 4);
+  EXPECT_NEAR(params[0], 2048.0 / (2.0 * EIGEN_PI), 1e-6);
+  EXPECT_NEAR(params[1], 1024.0 / EIGEN_PI, 1e-6);
+  EXPECT_NEAR(params[2], 1024.0, 1e-6);
+  EXPECT_NEAR(params[3], 512.0, 1e-6);
+
+  EXPECT_TRUE(
+      CameraModelVerifyParams(EquirectangularCameraModel::model_id, params));
+  EXPECT_EQ(CameraModelNumParams(EquirectangularCameraModel::model_id), 4);
+  EXPECT_EQ(CameraModelParamsInfo(EquirectangularCameraModel::model_id),
+            EquirectangularCameraModel::params_info);
+
+  // Test round-trip for front, right, back, left, top, bottom directions.
+  const std::vector<Eigen::Vector3d> directions = {
+      Eigen::Vector3d(0, 0, 1),   // front
+      Eigen::Vector3d(1, 0, 0),   // right
+      Eigen::Vector3d(0, 0, -1),  // back
+      Eigen::Vector3d(-1, 0, 0),  // left
+      Eigen::Vector3d(0, -1, 0),  // top
+      Eigen::Vector3d(0, 1, 0),   // bottom
+  };
+  for (const auto& dir : directions) {
+    const auto xy = CameraModelImgFromCam(
+        EquirectangularCameraModel::model_id, params, dir);
+    ASSERT_TRUE(xy.has_value());
+    const auto ray = CameraModelCamRayFromImg(
+        EquirectangularCameraModel::model_id, params, *xy);
+    ASSERT_TRUE(ray.has_value());
+    EXPECT_NEAR(ray->normalized().dot(dir.normalized()), 1.0, 1e-6);
+  }
+
+  // Test horizontal wrap: points near the seam should map to nearly the same
+  // ray.
+  const double fx = params[0];
+  const double cx = params[2];
+  const double cy = params[3];
+  const Eigen::Vector2d near_seam_left(cx + fx * (EIGEN_PI - 0.01), cy);
+  const Eigen::Vector2d near_seam_right(cx + fx * (-EIGEN_PI + 0.01), cy);
+  const auto ray_left = CameraModelCamRayFromImg(
+      EquirectangularCameraModel::model_id, params, near_seam_left);
+  const auto ray_right = CameraModelCamRayFromImg(
+      EquirectangularCameraModel::model_id, params, near_seam_right);
+  ASSERT_TRUE(ray_left.has_value());
+  ASSERT_TRUE(ray_right.has_value());
+  EXPECT_NEAR(ray_left->dot(*ray_right), 1.0, 1e-3);
+
+  // Test CamFromImgThreshold converts pixels to angular units.
+  const double threshold_px = 10.0;
+  const double threshold_cam = CameraModelCamFromImgThreshold(
+      EquirectangularCameraModel::model_id, params, threshold_px);
+  EXPECT_NEAR(threshold_cam, threshold_px / params[0], 1e-6);
+
+  // Test SPHERE alias.
+  EXPECT_EQ(CameraModelNameToId("SPHERE"),
+            EquirectangularCameraModel::model_id);
+}
+
 }  // namespace
 }  // namespace colmap

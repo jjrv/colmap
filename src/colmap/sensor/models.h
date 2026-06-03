@@ -40,6 +40,7 @@
 #include <vector>
 
 #include <Eigen/Core>
+#include <Eigen/Geometry>
 #include <Eigen/LU>
 #include <ceres/jet.h>
 
@@ -99,7 +100,8 @@ MAKE_ENUM_CLASS_OVERLOAD_STREAM(CameraModelId,
                                 kDivision,                // = 13
                                 kSimpleFisheye,           // = 14
                                 kFisheye,                 // = 15
-                                kEUCM                     // = 16
+                                kEUCM,                    // = 16
+                                kEquirectangular          // = 17
 );
 
 #ifndef CAMERA_MODEL_DEFINITIONS
@@ -171,7 +173,8 @@ MAKE_ENUM_CLASS_OVERLOAD_STREAM(CameraModelId,
   CAMERA_MODEL_CASE(DivisionCameraModel)            \
   CAMERA_MODEL_CASE(SimpleFisheyeCameraModel)       \
   CAMERA_MODEL_CASE(FisheyeCameraModel)             \
-  CAMERA_MODEL_CASE(EUCMCameraModel)
+  CAMERA_MODEL_CASE(EUCMCameraModel)                \
+  CAMERA_MODEL_CASE(EquirectangularCameraModel)
 #endif
 
 #ifndef CAMERA_MODEL_SWITCH_CASES
@@ -576,6 +579,25 @@ struct EUCMCameraModel : public BaseCameraModel<EUCMCameraModel> {
                                          T max_extra_param);
 };
 
+// Equirectangular camera model.
+//
+// Models a full 360-degree equirectangular / spherical panorama.
+// The projection maps a 3D camera ray to longitude/latitude and then to
+// image pixel coordinates. The back hemisphere is fully represented.
+//
+// fx and fy are the angular scale in pixels per radian:
+//   fx = width / (2 * pi), fy = height / pi
+//
+// Parameter list is expected in the following order:
+//
+//    fx, fy, cx, cy
+//
+struct EquirectangularCameraModel
+    : public BaseCameraModel<EquirectangularCameraModel> {
+  CAMERA_MODEL_DEFINITIONS(
+      CameraModelId::kEquirectangular, "EQUIRECTANGULAR", 2, 2, 0, false)
+};
+
 // Check whether camera model with given name or identifier exists.
 bool ExistsCameraModelWithName(const std::string& model_name);
 bool ExistsCameraModelWithId(CameraModelId model_id);
@@ -678,6 +700,22 @@ inline std::optional<Eigen::Vector2d> CameraModelCamFromImg(
     const std::vector<double>& params,
     const Eigen::Vector2d& xy);
 
+// Transform image coordinates to a unit camera ray.
+//
+// For standard camera models, this is equivalent to
+// `CamFromImg(...).homogeneous().normalized()`. For equirectangular cameras,
+// it returns the true full-sphere 3D ray.
+//
+// @param model_id      Unique identifier of camera model.
+// @param params        Array of camera parameters.
+// @param xy            Image coordinates in pixels.
+//
+// @return              Unit camera ray, or std::nullopt on failure.
+inline std::optional<Eigen::Vector3d> CameraModelCamRayFromImg(
+    CameraModelId model_id,
+    const std::vector<double>& params,
+    const Eigen::Vector2d& xy);
+
 // Convert pixel threshold in image plane to camera space by dividing
 // the threshold through the mean focal length.
 //
@@ -696,6 +734,13 @@ inline double CameraModelCamFromImgThreshold(CameraModelId model_id,
 //
 // @return              Whether it is a fisheye camera model.
 inline bool CameraModelIsFisheye(CameraModelId model_id);
+
+// Test if a camera model represents a full-sphere / equirectangular camera.
+//
+// @param model_id      Unique identifier of camera model.
+//
+// @return              Whether it is an equirectangular camera model.
+inline bool CameraModelIsEquirectangular(CameraModelId model_id);
 
 ////////////////////////////////////////////////////////////////////////////////
 // Implementation
@@ -2466,6 +2511,76 @@ bool EUCMCameraModel::CamFromImg(const double* params,
   return true;
 }
 
+////////////////////////////////////////////////////////////////////////////////
+// EquirectangularCameraModel
+
+std::string EquirectangularCameraModel::InitializeParamsInfo() {
+  return "fx, fy, cx, cy";
+}
+
+std::array<size_t, 2> EquirectangularCameraModel::InitializeFocalLengthIdxs() {
+  return {0, 1};
+}
+
+std::array<size_t, 2>
+EquirectangularCameraModel::InitializePrincipalPointIdxs() {
+  return {2, 3};
+}
+
+std::array<size_t, 0> EquirectangularCameraModel::InitializeExtraParamsIdxs() {
+  return {};
+}
+
+std::vector<double> EquirectangularCameraModel::InitializeParams(
+    const double focal_length, const size_t width, const size_t height) {
+  return {static_cast<double>(width) / (2.0 * static_cast<double>(EIGEN_PI)),
+          static_cast<double>(height) / static_cast<double>(EIGEN_PI),
+          width / 2.0,
+          height / 2.0};
+}
+
+template <typename T>
+bool EquirectangularCameraModel::ImgFromCam(
+    const T* params, const T& u, const T& v, const T& w, T* x, T* y) {
+  const T norm = ceres::sqrt(u * u + v * v + w * w);
+  if (norm < std::numeric_limits<T>::epsilon()) {
+    return false;
+  }
+
+  const T f1 = params[0];
+  const T f2 = params[1];
+  const T c1 = params[2];
+  const T c2 = params[3];
+
+  const T lon = ceres::atan2(u, w);
+  const T lat = ceres::atan2(-v, ceres::sqrt(u * u + w * w));
+
+  *x = c1 + f1 * lon;
+  *y = c2 + f2 * lat;
+
+  return true;
+}
+
+bool EquirectangularCameraModel::CamFromImg(
+    const double* params, double x, double y, double* u, double* v) {
+  const double c1 = params[2];
+  const double c2 = params[3];
+  const double f1 = params[0];
+  const double f2 = params[1];
+
+  *u = (x - c1) / f1;
+  *v = (y - c2) / f2;
+
+  return true;
+}
+
+template <typename T>
+void EquirectangularCameraModel::Distortion(
+    const T* extra_params, const T& u, const T& v, T* du, T* dv) {
+  *du = T(0);
+  *dv = T(0);
+}
+
 std::optional<Eigen::Vector2d> CameraModelImgFromCam(
     const CameraModelId model_id,
     const std::vector<double>& params,
@@ -2538,6 +2653,34 @@ bool CameraModelIsFisheye(const CameraModelId model_id) {
   }
 
   return false;
+}
+
+std::optional<Eigen::Vector3d> CameraModelCamRayFromImg(
+    const CameraModelId model_id,
+    const std::vector<double>& params,
+    const Eigen::Vector2d& xy) {
+  switch (model_id) {
+    case CameraModelId::kEquirectangular: {
+      const double lon = (xy.x() - params[2]) / params[0];
+      const double lat = (xy.y() - params[3]) / params[1];
+      const double cos_lat = std::cos(lat);
+      return Eigen::Vector3d(cos_lat * std::sin(lon),
+                             -std::sin(lat),
+                             cos_lat * std::cos(lon));
+    }
+    default: {
+      const std::optional<Eigen::Vector2d> cam_point =
+          CameraModelCamFromImg(model_id, params, xy);
+      if (cam_point) {
+        return cam_point->homogeneous().normalized();
+      }
+      return std::nullopt;
+    }
+  }
+}
+
+bool CameraModelIsEquirectangular(const CameraModelId model_id) {
+  return model_id == CameraModelId::kEquirectangular;
 }
 
 }  // namespace colmap
