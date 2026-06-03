@@ -548,8 +548,8 @@ size_t ObservationManager::FilterPoints3DWithLargeReprojectionError(
           if (CameraModelIsEquirectangular(camera.model_id)) {
             const double error = CalculateAngularReprojectionError(
                 point2D.xy, point3D.xyz, image.CamFromWorld(), camera);
-            should_filter = error > max_angular_error_rad;
-            observation_error = RadToDeg(error);
+            should_filter = error > max_error;
+            observation_error = error;
           } else {
             const Eigen::Vector3d point3D_in_cam =
                 image.CamFromWorld() * point3D.xyz;

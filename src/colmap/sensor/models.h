@@ -2556,7 +2556,7 @@ bool EquirectangularCameraModel::ImgFromCam(
   const T lat = ceres::atan2(-v, ceres::sqrt(u * u + w * w));
 
   *x = c1 + f1 * lon;
-  *y = c2 + f2 * lat;
+  *y = c2 - f2 * lat;
 
   return true;
 }
@@ -2662,7 +2662,7 @@ std::optional<Eigen::Vector3d> CameraModelCamRayFromImg(
   switch (model_id) {
     case CameraModelId::kEquirectangular: {
       const double lon = (xy.x() - params[2]) / params[0];
-      const double lat = (xy.y() - params[3]) / params[1];
+      const double lat = (params[3] - xy.y()) / params[1];
       const double cos_lat = std::cos(lat);
       return Eigen::Vector3d(cos_lat * std::sin(lon),
                              -std::sin(lat),

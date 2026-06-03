@@ -33,6 +33,8 @@
 #include "colmap/math/random.h"
 #include "colmap/sensor/models.h"
 
+#include <cmath>
+
 #include <gtest/gtest.h>
 
 namespace colmap {
@@ -70,6 +72,27 @@ TEST(ReprojErrorCostFunctor, Nominal) {
   EXPECT_TRUE(cost_function->Evaluate(parameters, residuals, nullptr));
   EXPECT_EQ(residuals[0], 0);
   EXPECT_EQ(residuals[1], 0);
+}
+
+TEST(ReprojErrorCostFunctor, EquirectangularWrapsSeam) {
+  const std::vector<double> camera_params_vec =
+    EquirectangularCameraModel::InitializeParams(1.0, 2048, 1024);
+  const double lon = -EIGEN_PI + 0.01;
+  const Eigen::Vector3d point3D(std::sin(lon), 0, std::cos(lon));
+  const Eigen::Vector2d observed(2048 - camera_params_vec[0] * 0.01,
+                 camera_params_vec[3]);
+  std::vector<double> camera_params = camera_params_vec;
+  double cam_from_world[7] = {0, 0, 0, 1, 0, 0, 0};
+  double point3D_data[3] = {point3D.x(), point3D.y(), point3D.z()};
+  double residuals[2];
+  const double* parameters[3] = {
+    point3D_data, cam_from_world, camera_params.data()};
+
+  std::unique_ptr<ceres::CostFunction> cost_function(
+    ReprojErrorCostFunctor<EquirectangularCameraModel>::Create(observed));
+  EXPECT_TRUE(cost_function->Evaluate(parameters, residuals, nullptr));
+  EXPECT_NEAR(residuals[0], 2.0 * camera_params[0] * 0.01, 1e-6);
+  EXPECT_NEAR(residuals[1], 0.0, 1e-6);
 }
 
 TEST(ReprojErrorCostFunctor, AnalyticalVersusAutoDiff) {
@@ -257,6 +280,28 @@ TEST(RigReprojErrorCostFunctor, Nominal) {
   EXPECT_TRUE(cost_function->Evaluate(parameters, residuals, nullptr));
   EXPECT_EQ(residuals[0], -2);
   EXPECT_EQ(residuals[1], 2);
+}
+
+TEST(RigReprojErrorCostFunctor, EquirectangularWrapsSeam) {
+  const std::vector<double> camera_params_vec =
+    EquirectangularCameraModel::InitializeParams(1.0, 2048, 1024);
+  const double lon = -EIGEN_PI + 0.01;
+  const Eigen::Vector3d point3D(std::sin(lon), 0, std::cos(lon));
+  const Eigen::Vector2d observed(2048 - camera_params_vec[0] * 0.01,
+                 camera_params_vec[3]);
+  std::vector<double> camera_params = camera_params_vec;
+  double cam_from_rig[7] = {0, 0, 0, 1, 0, 0, 0};
+  double rig_from_world[7] = {0, 0, 0, 1, 0, 0, 0};
+  double point3D_data[3] = {point3D.x(), point3D.y(), point3D.z()};
+  double residuals[2];
+  const double* parameters[4] = {
+    point3D_data, cam_from_rig, rig_from_world, camera_params.data()};
+
+  std::unique_ptr<ceres::CostFunction> cost_function(
+    RigReprojErrorCostFunctor<EquirectangularCameraModel>::Create(observed));
+  EXPECT_TRUE(cost_function->Evaluate(parameters, residuals, nullptr));
+  EXPECT_NEAR(residuals[0], 2.0 * camera_params[0] * 0.01, 1e-6);
+  EXPECT_NEAR(residuals[1], 0.0, 1e-6);
 }
 
 TEST(RigReprojErrorConstantRigCostFunctor, Nominal) {

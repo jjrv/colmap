@@ -372,7 +372,8 @@ bool RefineGeneralizedAbsolutePose(const AbsolutePoseRefinementOptions& options,
       // We don't optimize the rig parameters (it's likely under-constrained).
       problem.SetParameterBlockConstant(cam_from_rig_params[i].data());
 
-      if (!options.refine_focal_length && !options.refine_extra_params) {
+      if ((!options.refine_focal_length && !options.refine_extra_params) ||
+          CameraModelIsEquirectangular(camera.model_id)) {
         problem.SetParameterBlockConstant(camera.params.data());
       } else {
         // Always set the principal point as fixed.

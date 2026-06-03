@@ -32,6 +32,8 @@
 #include "colmap/sensor/models.h"
 #include "colmap/util/eigen_alignment.h"
 
+#include <cmath>
+
 #include <Eigen/Core>
 #include <gtest/gtest.h>
 
@@ -66,6 +68,23 @@ TEST(CalculateSquaredReprojectionError, Nominal) {
   EXPECT_NEAR(CalculateSquaredReprojectionError(
                   point2D.array() + 1, point3D, cam_from_world_mat, camera),
               2,
+              1e-6);
+}
+
+TEST(CalculateSquaredReprojectionError, EquirectangularWrapsSeam) {
+  const Rigid3d cam_from_world(Eigen::Quaterniond::Identity(),
+                               Eigen::Vector3d::Zero());
+  const Camera camera = Camera::CreateFromModelId(
+      1, EquirectangularCameraModel::model_id, 1.0, 2048, 1024);
+  const double lon = -EIGEN_PI + 0.01;
+  const Eigen::Vector3d point3D(std::sin(lon), 0, std::cos(lon));
+  const Eigen::Vector2d observed(2048 - camera.params[0] * 0.01,
+                                 camera.params[3]);
+  const double expected_error = 2.0 * camera.params[0] * 0.01;
+
+  EXPECT_NEAR(CalculateSquaredReprojectionError(
+                  observed, point3D, cam_from_world, camera),
+              expected_error * expected_error,
               1e-6);
 }
 

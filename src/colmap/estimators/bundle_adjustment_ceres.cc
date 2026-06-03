@@ -418,7 +418,8 @@ void ParameterizeCameras(const BundleAdjustmentOptions& options,
   for (const camera_t camera_id : camera_ids) {
     Camera& camera = reconstruction.Camera(camera_id);
 
-    if (constant_camera || config.HasConstantCamIntrinsics(camera_id)) {
+    if (constant_camera || config.HasConstantCamIntrinsics(camera_id) ||
+        CameraModelIsEquirectangular(camera.model_id)) {
       problem.SetParameterBlockConstant(camera.params.data());
     } else {
       std::vector<int> const_camera_params;

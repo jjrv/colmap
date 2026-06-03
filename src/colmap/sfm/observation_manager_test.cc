@@ -29,6 +29,7 @@
 
 #include "colmap/sfm/observation_manager.h"
 
+#include <cmath>
 #include <memory>
 
 #include <gtest/gtest.h>
@@ -208,6 +209,60 @@ TEST(ObservationManager, FilterPoints3DWithLargeReprojectionErrorTypes) {
   EXPECT_EQ(obs_manager.FilterPoints3DWithLargeReprojectionError(
                 0.5, {id3}, ReprojectionErrorType::ANGULAR),
             2);
+}
+
+TEST(ObservationManager, FilterEquirectangularNormalizedErrorInRadians) {
+  Reconstruction reconstruction;
+  const camera_t kCameraId = 1;
+  Camera camera = Camera::CreateFromModelId(
+    kCameraId, EquirectangularCameraModel::model_id, 1.0, 2048, 1024);
+  reconstruction.AddCamera(camera);
+
+  Rig rig;
+  rig.SetRigId(1);
+  rig.AddRefSensor(camera.SensorId());
+  reconstruction.AddRig(rig);
+
+  Frame frame;
+  frame.SetFrameId(1);
+  frame.SetRigId(rig.RigId());
+  frame.AddDataId(data_t(camera.SensorId(), 1));
+  frame.AddDataId(data_t(camera.SensorId(), 2));
+  frame.SetRigFromWorld(Rigid3d());
+  reconstruction.AddFrame(frame);
+
+  Image image1;
+  image1.SetImageId(1);
+  image1.SetCameraId(kCameraId);
+  image1.SetFrameId(1);
+  image1.SetPoints2D({Eigen::Vector2d(1024, 512)});
+  reconstruction.AddImage(image1);
+
+  Image image2;
+  image2.SetImageId(2);
+  image2.SetCameraId(kCameraId);
+  image2.SetFrameId(1);
+  image2.SetPoints2D({Eigen::Vector2d(1024, 512)});
+  reconstruction.AddImage(image2);
+
+  ObservationManager obs_manager(reconstruction);
+  const double angular_error = 0.02;
+  const Eigen::Vector3d point3D(
+    std::sin(angular_error), 0, std::cos(angular_error));
+  const point3D_t point3D_id = reconstruction.AddPoint3D(point3D, Track());
+  reconstruction.AddObservation(point3D_id, TrackElement(1, 0));
+  reconstruction.AddObservation(point3D_id, TrackElement(2, 0));
+
+  EXPECT_EQ(obs_manager.FilterPoints3DWithLargeReprojectionError(
+          angular_error * 1.1,
+          {point3D_id},
+          ReprojectionErrorType::NORMALIZED),
+      0);
+  EXPECT_EQ(obs_manager.FilterPoints3DWithLargeReprojectionError(
+        angular_error * 0.9,
+        {point3D_id},
+        ReprojectionErrorType::NORMALIZED),
+      2);
 }
 
 TEST(ObservationManager, FilterPoints3DInImages) {

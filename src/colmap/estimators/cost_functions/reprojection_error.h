@@ -39,6 +39,19 @@
 
 namespace colmap {
 
+template <typename T>
+inline void WrapEquirectangularResiduals(const T* const camera_params,
+                                         const Eigen::Vector2d& point2D,
+                                         T* residuals) {
+  Eigen::Map<Eigen::Matrix<T, 2, 1>> residuals_vec(residuals);
+  const T width = camera_params[0] * T(2.0 * EIGEN_PI);
+  const T half_width = width / T(2.0);
+  T dx = residuals[0] - T(point2D.x());
+  dx = dx - width * ceres::floor((dx + half_width) / width);
+  residuals_vec(0) = dx;
+  residuals_vec(1) -= T(point2D.y());
+}
+
 // Rotates the point and computes the Jacobian of R(q) * p with respect to Eigen
 // quaternions. J_out is a 3x4 matrix in row-major order.
 inline Eigen::Vector3d QuaternionRotatePointWithJac(const double* q,
@@ -256,12 +269,7 @@ class ReprojErrorCostFunctor<EquirectangularCameraModel>
                                                point3D_in_cam[2],
                                                &residuals[0],
                                                &residuals[1])) {
-      const T width = camera_params[0] * T(2.0 * EIGEN_PI);
-      const T half_width = width / T(2.0);
-      T dx = residuals[0] - T(point2D_.x());
-      dx = dx - width * ceres::floor((dx + half_width) / width);
-      residuals_vec(0) = dx;
-      residuals_vec(1) -= T(point2D_.y());
+      WrapEquirectangularResiduals(camera_params, point2D_, residuals);
     } else {
       residuals_vec.setZero();
     }
@@ -368,6 +376,48 @@ class RigReprojErrorCostFunctor
                                 &residuals[0],
                                 &residuals[1])) {
       residuals_vec -= point2D_.cast<T>();
+    } else {
+      residuals_vec.setZero();
+    }
+    return true;
+  }
+
+ private:
+  const Eigen::Vector2d point2D_;
+};
+
+template <>
+class RigReprojErrorCostFunctor<EquirectangularCameraModel>
+    : public AutoDiffCostFunctor<RigReprojErrorCostFunctor<EquirectangularCameraModel>,
+                                 2,
+                                 3,
+                                 7,
+                                 7,
+                                 EquirectangularCameraModel::num_params> {
+ public:
+  explicit RigReprojErrorCostFunctor(const Eigen::Vector2d& point2D)
+      : point2D_(point2D) {}
+
+  template <typename T>
+  bool operator()(const T* const point3D_in_world,
+                  const T* const cam_from_rig,
+                  const T* const rig_from_world,
+                  const T* const camera_params,
+                  T* residuals) const {
+    const Eigen::Matrix<T, 3, 1> point3D_in_cam =
+        EigenQuaternionMap<T>(cam_from_rig) *
+            (EigenQuaternionMap<T>(rig_from_world) *
+                 EigenVector3Map<T>(point3D_in_world) +
+             EigenVector3Map<T>(rig_from_world + 4)) +
+        EigenVector3Map<T>(cam_from_rig + 4);
+    Eigen::Map<Eigen::Matrix<T, 2, 1>> residuals_vec(residuals);
+    if (EquirectangularCameraModel::ImgFromCam(camera_params,
+                                               point3D_in_cam[0],
+                                               point3D_in_cam[1],
+                                               point3D_in_cam[2],
+                                               &residuals[0],
+                                               &residuals[1])) {
+      WrapEquirectangularResiduals(camera_params, point2D_, residuals);
     } else {
       residuals_vec.setZero();
     }

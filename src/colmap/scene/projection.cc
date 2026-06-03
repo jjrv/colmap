@@ -29,9 +29,29 @@
 
 #include "colmap/scene/projection.h"
 
+#include <cmath>
 #include <limits>
 
 namespace colmap {
+namespace {
+
+double WrapEquirectangularHorizontalError(const double dx, const double width) {
+  const double half_width = width / 2.0;
+  return dx - width * std::floor((dx + half_width) / width);
+}
+
+double SquaredReprojectionError(const Eigen::Vector2d& point2D,
+                                const Eigen::Vector2d& proj_point2D,
+                                const Camera& camera) {
+  Eigen::Vector2d residual = proj_point2D - point2D;
+  if (CameraModelIsEquirectangular(camera.model_id)) {
+    residual.x() = WrapEquirectangularHorizontalError(
+        residual.x(), static_cast<double>(camera.width));
+  }
+  return residual.squaredNorm();
+}
+
+}  // namespace
 
 double CalculateSquaredReprojectionError(const Eigen::Vector2d& point2D,
                                          const Eigen::Vector3d& point3D,
@@ -43,7 +63,7 @@ double CalculateSquaredReprojectionError(const Eigen::Vector2d& point2D,
   if (!proj_point2D) {
     return std::numeric_limits<double>::max();
   }
-  return (*proj_point2D - point2D).squaredNorm();
+  return SquaredReprojectionError(point2D, *proj_point2D, camera);
 }
 
 double CalculateSquaredReprojectionError(
@@ -57,7 +77,7 @@ double CalculateSquaredReprojectionError(
   if (!proj_point2D) {
     return std::numeric_limits<double>::max();
   }
-  return (*proj_point2D - point2D).squaredNorm();
+  return SquaredReprojectionError(point2D, *proj_point2D, camera);
 }
 
 double CalculateAngularReprojectionError(const Eigen::Vector2d& point2D,

@@ -698,75 +698,90 @@ TwoViewGeometry EstimateCalibratedTwoViewGeometry(
       H_ransac.Estimate(matched_img_points1, matched_img_points2);
   geometry.H = H_report.model;
 
-  if ((!E_report.success && !F_report.success && !H_report.success) ||
-      (E_report.support.num_inliers < min_num_inliers &&
-       F_report.support.num_inliers < min_num_inliers &&
-       H_report.support.num_inliers < min_num_inliers)) {
-    geometry.config = TwoViewGeometry::ConfigurationType::DEGENERATE;
-    return geometry;
-  }
-
-  // Determine inlier ratios of different models.
-
-  const double E_F_inlier_ratio =
-      static_cast<double>(E_report.support.num_inliers) /
-      F_report.support.num_inliers;
-  const double H_F_inlier_ratio =
-      static_cast<double>(H_report.support.num_inliers) /
-      F_report.support.num_inliers;
-  const double H_E_inlier_ratio =
-      static_cast<double>(H_report.support.num_inliers) /
-      E_report.support.num_inliers;
-
   const std::vector<char>* best_inlier_mask = nullptr;
   size_t num_inliers = 0;
 
-  if (E_report.success && E_F_inlier_ratio > options.min_E_F_inlier_ratio &&
-      E_report.support.num_inliers >= min_num_inliers) {
-    // Calibrated configuration.
+  const bool is_equirectangular_pair =
+      CameraModelIsEquirectangular(camera1.model_id) &&
+      CameraModelIsEquirectangular(camera2.model_id);
 
-    // Always use the model with maximum matches.
-    if (E_report.support.num_inliers >= F_report.support.num_inliers) {
+  if (is_equirectangular_pair) {
+    if (E_report.success && E_report.support.num_inliers >= min_num_inliers) {
+      geometry.config = TwoViewGeometry::ConfigurationType::CALIBRATED;
       num_inliers = E_report.support.num_inliers;
       best_inlier_mask = &E_report.inlier_mask;
     } else {
+      geometry.config = TwoViewGeometry::ConfigurationType::DEGENERATE;
+      return geometry;
+    }
+  } else {
+    if ((!E_report.success && !F_report.success && !H_report.success) ||
+        (E_report.support.num_inliers < min_num_inliers &&
+         F_report.support.num_inliers < min_num_inliers &&
+         H_report.support.num_inliers < min_num_inliers)) {
+      geometry.config = TwoViewGeometry::ConfigurationType::DEGENERATE;
+      return geometry;
+    }
+
+    // Determine inlier ratios of different models.
+
+    const double E_F_inlier_ratio =
+        static_cast<double>(E_report.support.num_inliers) /
+        F_report.support.num_inliers;
+    const double H_F_inlier_ratio =
+        static_cast<double>(H_report.support.num_inliers) /
+        F_report.support.num_inliers;
+    const double H_E_inlier_ratio =
+        static_cast<double>(H_report.support.num_inliers) /
+        E_report.support.num_inliers;
+
+    if (E_report.success && E_F_inlier_ratio > options.min_E_F_inlier_ratio &&
+        E_report.support.num_inliers >= min_num_inliers) {
+      // Calibrated configuration.
+
+      // Always use the model with maximum matches.
+      if (E_report.support.num_inliers >= F_report.support.num_inliers) {
+        num_inliers = E_report.support.num_inliers;
+        best_inlier_mask = &E_report.inlier_mask;
+      } else {
+        num_inliers = F_report.support.num_inliers;
+        best_inlier_mask = &F_report.inlier_mask;
+      }
+
+      if (H_E_inlier_ratio > options.max_H_inlier_ratio) {
+        geometry.config = TwoViewGeometry::ConfigurationType::PLANAR_OR_PANORAMIC;
+        if (H_report.support.num_inliers > num_inliers) {
+          num_inliers = H_report.support.num_inliers;
+          best_inlier_mask = &H_report.inlier_mask;
+        }
+      } else {
+        geometry.config = TwoViewGeometry::ConfigurationType::CALIBRATED;
+      }
+    } else if (F_report.success &&
+               F_report.support.num_inliers >= min_num_inliers) {
+      // Uncalibrated configuration.
+
       num_inliers = F_report.support.num_inliers;
       best_inlier_mask = &F_report.inlier_mask;
-    }
 
-    if (H_E_inlier_ratio > options.max_H_inlier_ratio) {
-      geometry.config = TwoViewGeometry::ConfigurationType::PLANAR_OR_PANORAMIC;
-      if (H_report.support.num_inliers > num_inliers) {
-        num_inliers = H_report.support.num_inliers;
-        best_inlier_mask = &H_report.inlier_mask;
+      if (H_F_inlier_ratio > options.max_H_inlier_ratio) {
+        geometry.config = TwoViewGeometry::ConfigurationType::PLANAR_OR_PANORAMIC;
+        if (H_report.support.num_inliers > num_inliers) {
+          num_inliers = H_report.support.num_inliers;
+          best_inlier_mask = &H_report.inlier_mask;
+        }
+      } else {
+        geometry.config = TwoViewGeometry::ConfigurationType::UNCALIBRATED;
       }
-    } else {
-      geometry.config = TwoViewGeometry::ConfigurationType::CALIBRATED;
-    }
-  } else if (F_report.success &&
-             F_report.support.num_inliers >= min_num_inliers) {
-    // Uncalibrated configuration.
-
-    num_inliers = F_report.support.num_inliers;
-    best_inlier_mask = &F_report.inlier_mask;
-
-    if (H_F_inlier_ratio > options.max_H_inlier_ratio) {
+    } else if (H_report.success &&
+               H_report.support.num_inliers >= min_num_inliers) {
+      num_inliers = H_report.support.num_inliers;
+      best_inlier_mask = &H_report.inlier_mask;
       geometry.config = TwoViewGeometry::ConfigurationType::PLANAR_OR_PANORAMIC;
-      if (H_report.support.num_inliers > num_inliers) {
-        num_inliers = H_report.support.num_inliers;
-        best_inlier_mask = &H_report.inlier_mask;
-      }
     } else {
-      geometry.config = TwoViewGeometry::ConfigurationType::UNCALIBRATED;
+      geometry.config = TwoViewGeometry::ConfigurationType::DEGENERATE;
+      return geometry;
     }
-  } else if (H_report.success &&
-             H_report.support.num_inliers >= min_num_inliers) {
-    num_inliers = H_report.support.num_inliers;
-    best_inlier_mask = &H_report.inlier_mask;
-    geometry.config = TwoViewGeometry::ConfigurationType::PLANAR_OR_PANORAMIC;
-  } else {
-    geometry.config = TwoViewGeometry::ConfigurationType::DEGENERATE;
-    return geometry;
   }
 
   if (best_inlier_mask != nullptr) {

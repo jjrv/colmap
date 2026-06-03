@@ -437,19 +437,22 @@ TEST(EquirectangularCamera, Nominal) {
   EXPECT_EQ(CameraModelParamsInfo(EquirectangularCameraModel::model_id),
             EquirectangularCameraModel::params_info);
 
-  // Test round-trip for front, right, back, left, top, bottom directions.
-  const std::vector<Eigen::Vector3d> directions = {
-      Eigen::Vector3d(0, 0, 1),   // front
-      Eigen::Vector3d(1, 0, 0),   // right
-      Eigen::Vector3d(0, 0, -1),  // back
-      Eigen::Vector3d(-1, 0, 0),  // left
-      Eigen::Vector3d(0, -1, 0),  // top
-      Eigen::Vector3d(0, 1, 0),   // bottom
+  // Test absolute pixel locations and round-trip for front, right, back, left,
+  // top, bottom directions.
+  const std::vector<std::pair<Eigen::Vector3d, Eigen::Vector2d>> samples = {
+      {Eigen::Vector3d(0, 0, 1), Eigen::Vector2d(1024, 512)},
+      {Eigen::Vector3d(1, 0, 0), Eigen::Vector2d(1536, 512)},
+      {Eigen::Vector3d(0, 0, -1), Eigen::Vector2d(2048, 512)},
+      {Eigen::Vector3d(-1, 0, 0), Eigen::Vector2d(512, 512)},
+      {Eigen::Vector3d(0, -1, 0), Eigen::Vector2d(1024, 0)},
+      {Eigen::Vector3d(0, 1, 0), Eigen::Vector2d(1024, 1024)},
   };
-  for (const auto& dir : directions) {
+  for (const auto& [dir, expected_xy] : samples) {
     const auto xy = CameraModelImgFromCam(
         EquirectangularCameraModel::model_id, params, dir);
     ASSERT_TRUE(xy.has_value());
+    EXPECT_NEAR(xy->x(), expected_xy.x(), 1e-6);
+    EXPECT_NEAR(xy->y(), expected_xy.y(), 1e-6);
     const auto ray = CameraModelCamRayFromImg(
         EquirectangularCameraModel::model_id, params, *xy);
     ASSERT_TRUE(ray.has_value());

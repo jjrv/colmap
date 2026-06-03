@@ -41,6 +41,8 @@
 #include "colmap/scene/synthetic.h"
 #include "colmap/util/eigen_alignment.h"
 
+#include <cmath>
+
 #include <Eigen/Core>
 #include <gtest/gtest.h>
 
@@ -546,6 +548,51 @@ TEST(EstimateTwoViewGeometry, CalibratedDeterministic) {
 
   // Using a different random seed may produce different results.
   EXPECT_NE(geometry1.E, geometry3.E);
+}
+
+TEST(EstimateTwoViewGeometry, EquirectangularPairUsesCalibratedModel) {
+  Camera camera1 = Camera::CreateFromModelId(
+      1, EquirectangularCameraModel::model_id, 1.0, 2048, 1024);
+  Camera camera2 = Camera::CreateFromModelId(
+      2, EquirectangularCameraModel::model_id, 1.0, 2048, 1024);
+  camera1.has_prior_focal_length = false;
+  camera2.has_prior_focal_length = false;
+
+  const Rigid3d cam1_from_world;
+  const Rigid3d cam2_from_world(Eigen::Quaterniond::Identity(),
+                                Eigen::Vector3d(-0.5, 0.1, 0.0));
+  std::vector<Eigen::Vector2d> points1;
+  std::vector<Eigen::Vector2d> points2;
+  FeatureMatches matches;
+  for (int lon_idx = 0; lon_idx < 8; ++lon_idx) {
+    const double lon = -2.8 + lon_idx * 0.8;
+    for (int lat_idx = 0; lat_idx < 4; ++lat_idx) {
+      const double lat = -0.6 + lat_idx * 0.4;
+      const double depth = 4.0 + 0.2 * lon_idx + 0.1 * lat_idx;
+      const Eigen::Vector3d ray(std::cos(lat) * std::sin(lon),
+                                -std::sin(lat),
+                                std::cos(lat) * std::cos(lon));
+      const Eigen::Vector3d point3D = depth * ray;
+      const auto point1 = camera1.ImgFromCam(cam1_from_world * point3D);
+      const auto point2 = camera2.ImgFromCam(cam2_from_world * point3D);
+      ASSERT_TRUE(point1.has_value());
+      ASSERT_TRUE(point2.has_value());
+      matches.emplace_back(points1.size(), points2.size());
+      points1.push_back(*point1);
+      points2.push_back(*point2);
+    }
+  }
+
+  TwoViewGeometryOptions options;
+  options.compute_relative_pose = true;
+  options.detect_watermark = false;
+  options.ransac_options.random_seed = 42;
+  const TwoViewGeometry geometry =
+      EstimateTwoViewGeometry(camera1, points1, camera2, points2, matches, options);
+
+  EXPECT_EQ(geometry.config, TwoViewGeometry::ConfigurationType::CALIBRATED);
+  EXPECT_TRUE(geometry.cam2_from_cam1.has_value());
+  EXPECT_GT(geometry.inlier_matches.size(), 20);
 }
 
 TEST(EstimateTwoViewGeometry, UncalibratedDeterministic) {

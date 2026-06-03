@@ -56,7 +56,8 @@ bool EstimateAbsolutePose(const AbsolutePoseEstimationOptions& options,
   *num_inliers = 0;
   inlier_mask->clear();
 
-  if (options.estimate_focal_length) {
+  if (options.estimate_focal_length &&
+      !CameraModelIsEquirectangular(camera->model_id)) {
     // TODO(jsch): Implement non-minimal solver for LORANSAC refinement.
     // Experiments showed marginal difference between RANSAC/LORANSAC for PNPF
     // after refining the estimates of this function using RefineAbsolutePose.
@@ -203,7 +204,8 @@ bool RefineAbsolutePose(const AbsolutePoseRefinementOptions& options,
   if (problem.NumResiduals() > 0) {
     if (problem.HasParameterBlock(camera->params.data())) {
       // Camera parameterization.
-      if (!options.refine_focal_length && !options.refine_extra_params) {
+      if ((!options.refine_focal_length && !options.refine_extra_params) ||
+          CameraModelIsEquirectangular(camera->model_id)) {
         problem.SetParameterBlockConstant(camera->params.data());
       } else {
         // Always set the principal point as fixed.
