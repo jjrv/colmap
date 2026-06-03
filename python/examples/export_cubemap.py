@@ -69,25 +69,37 @@ def read_cameras_txt(path: Path) -> dict[int, dict]:
 
 
 def read_images_txt(path: Path) -> dict[int, dict]:
-    """Read COLMAP images.txt. Returns {image_id: image_dict}."""
+    """Read COLMAP images.txt. Returns {image_id: image_dict}.
+
+    Each image occupies two lines (a header line and a POINTS2D line). The
+    POINTS2D line may be empty for images without observations, so we must not
+    drop blank lines while pairing.
+    """
     images = {}
     with open(path) as f:
-        lines = [l.strip() for l in f if l.strip() and not l.strip().startswith("#")]
-    # Two lines per image: header then points
-    for i in range(0, len(lines), 2):
-        header = lines[i].split()
-        img_id = int(header[0])
-        qvec = np.array([float(x) for x in header[1:5]])
-        tvec = np.array([float(x) for x in header[5:8]])
-        cam_id = int(header[8])
-        name = header[9]
-        images[img_id] = {
-            "id": img_id,
-            "qvec": qvec,
-            "tvec": tvec,
-            "camera_id": cam_id,
-            "name": name,
-        }
+        raw = [l.rstrip("\n") for l in f if not l.lstrip().startswith("#")]
+    expect_header = True
+    for line in raw:
+        if expect_header:
+            if not line.strip():
+                continue
+            header = line.split()
+            img_id = int(header[0])
+            qvec = np.array([float(x) for x in header[1:5]])
+            tvec = np.array([float(x) for x in header[5:8]])
+            cam_id = int(header[8])
+            name = header[9]
+            images[img_id] = {
+                "id": img_id,
+                "qvec": qvec,
+                "tvec": tvec,
+                "camera_id": cam_id,
+                "name": name,
+            }
+            expect_header = False
+        else:
+            # POINTS2D line (possibly empty); not needed for the export.
+            expect_header = True
     return images
 
 
@@ -104,11 +116,16 @@ def read_points3D_txt(path: Path) -> dict[int, dict]:
             xyz = np.array([float(x) for x in parts[1:4]])
             rgb = np.array([int(x) for x in parts[4:7]])
             error = float(parts[7])
+            track = []
+            track_parts = parts[8:]
+            for i in range(0, len(track_parts) - 1, 2):
+                track.append((int(track_parts[i]), int(track_parts[i + 1])))
             points[pt_id] = {
                 "id": pt_id,
                 "xyz": xyz,
                 "rgb": rgb,
                 "error": error,
+                "track": track,
             }
     return points
 
@@ -141,8 +158,13 @@ def write_images_txt(path: Path, images: dict[int, dict]) -> None:
                 f"{t[0]:.12g} {t[1]:.12g} {t[2]:.12g} "
                 f"{img['camera_id']} {img['name']}\n"
             )
-            # No 2D points for cubemap faces
-            f.write("\n")
+            points2D = img.get("points2D", [])
+            f.write(
+                " ".join(
+                    f"{x:.6f} {y:.6f} {pt_id}" for x, y, pt_id in points2D
+                )
+                + "\n"
+            )
 
 
 def write_points3D_txt(path: Path, points: dict[int, dict]) -> None:
@@ -155,9 +177,15 @@ def write_points3D_txt(path: Path, points: dict[int, dict]) -> None:
         for pt in points.values():
             xyz = pt["xyz"]
             rgb = pt["rgb"]
+            track = pt.get("track_out", [])
+            track_str = " ".join(
+                f"{img_id} {point2D_idx}" for img_id, point2D_idx in track
+            )
             f.write(
                 f"{pt['id']} {xyz[0]:.12g} {xyz[1]:.12g} {xyz[2]:.12g} "
-                f"{rgb[0]} {rgb[1]} {rgb[2]} {pt['error']:.12g}\n"
+                f"{rgb[0]} {rgb[1]} {rgb[2]} {pt['error']:.12g}"
+                + (f" {track_str}" if track_str else "")
+                + "\n"
             )
 
 
@@ -193,38 +221,28 @@ def qvec2rotmat(qvec: np.ndarray) -> np.ndarray:
 
 
 def rotmat2qvec(R: np.ndarray) -> np.ndarray:
-    """Convert rotation matrix to COLMAP quaternion (qw, qx, qy, qz)."""
-    # Ensure R is a proper rotation matrix
+    """Convert rotation matrix to COLMAP quaternion (qw, qx, qy, qz).
+
+    Uses the eigendecomposition method from COLMAP's read_write_model.py, which
+    is the exact inverse of ``qvec2rotmat``.
+    """
     R = np.array(R, dtype=np.float64)
-    # Use the algorithm from COLMAP's util/math.h
-    qvec = np.zeros(4, dtype=np.float64)
-    if R[2, 2] < 0:
-        if R[0, 0] > R[1, 1]:
-            t = 1 + R[0, 0] - R[1, 1] - R[2, 2]
-            qvec[1] = t
-            qvec[2] = R[0, 1] + R[1, 0]
-            qvec[3] = R[2, 0] + R[0, 2]
-            qvec[0] = R[1, 2] - R[2, 1]
-        else:
-            t = 1 - R[0, 0] + R[1, 1] - R[2, 2]
-            qvec[1] = R[0, 1] + R[1, 0]
-            qvec[2] = t
-            qvec[3] = R[1, 2] + R[2, 1]
-            qvec[0] = R[2, 0] - R[0, 2]
-    else:
-        if R[0, 0] < -R[1, 1]:
-            t = 1 - R[0, 0] - R[1, 1] + R[2, 2]
-            qvec[1] = R[2, 0] + R[0, 2]
-            qvec[2] = R[1, 2] + R[2, 1]
-            qvec[3] = t
-            qvec[0] = R[0, 1] - R[1, 0]
-        else:
-            t = 1 + R[0, 0] + R[1, 1] + R[2, 2]
-            qvec[1] = R[1, 2] - R[2, 1]
-            qvec[2] = R[2, 0] - R[0, 2]
-            qvec[3] = R[0, 1] - R[1, 0]
-            qvec[0] = t
-    qvec *= 0.5 / np.sqrt(t)
+    Rxx, Ryx, Rzx, Rxy, Ryy, Rzy, Rxz, Ryz, Rzz = R.flat
+    K = (
+        np.array(
+            [
+                [Rxx - Ryy - Rzz, 0, 0, 0],
+                [Ryx + Rxy, Ryy - Rxx - Rzz, 0, 0],
+                [Rzx + Rxz, Rzy + Ryz, Rzz - Rxx - Ryy, 0],
+                [Ryz - Rzy, Rzx - Rxz, Rxy - Ryx, Rxx + Ryy + Rzz],
+            ]
+        )
+        / 3.0
+    )
+    eigvals, eigvecs = np.linalg.eigh(K)
+    qvec = eigvecs[[3, 0, 1, 2], np.argmax(eigvals)]
+    if qvec[0] < 0:
+        qvec *= -1
     return qvec
 
 
@@ -252,11 +270,16 @@ def compose_pose(
     """
     Compose ERP pose with face rotation.
 
-    face_cam_from_world = face_rot @ erp_cam_from_world
+    ``face_rot`` is ``erp_from_face`` (it maps a face-frame ray to the ERP
+    frame, see ``render_cubemap_face``). The face camera shares the ERP camera
+    center, so the face extrinsics are::
+
+        face_from_world = face_from_erp @ erp_from_world = face_rot.T @ R_erp
+        t_face          = face_rot.T @ t_erp
     """
     R_erp = qvec2rotmat(qvec_erp)
-    R_face = face_rot @ R_erp
-    t_face = face_rot @ tvec_erp
+    R_face = face_rot.T @ R_erp
+    t_face = face_rot.T @ tvec_erp
     qvec_face = rotmat2qvec(R_face)
     # Normalize quaternion to unit length
     qvec_face /= np.linalg.norm(qvec_face)
@@ -308,8 +331,8 @@ def render_cubemap_face(
     """
     Render a single cubemap face from an ERP panorama.
 
-    face_rot: rotation from pinhole camera frame to ERP camera frame.
-              We need its inverse to map face rays to ERP frame.
+    face_rot: rotation that maps a face-frame ray to the ERP camera frame
+              (i.e. ``erp_from_face``). Applied directly to each face ray.
     """
     pano_h, pano_w = pano_image.shape[:2]
 
@@ -430,11 +453,14 @@ def export_cubemap(
     max_img_id = max(images.keys()) if images else 0
     output_images = {}
     img_id_counter = max_img_id + 1
+    # Map each ERP image id to its generated (face_name, output_image_id) faces.
+    erp_to_faces: dict[int, list[tuple[str, int]]] = {}
 
     for img_id, img in tqdm(images.items(), desc="Processing images"):
         cam_id = img["camera_id"]
         if cam_id not in erp_camera_ids:
             # Non-ERP image: copy unchanged
+            img.setdefault("points2D", [])
             output_images[img_id] = img
             src_path = input_image_dir / img["name"]
             dst_path = output_images_dir / img["name"]
@@ -477,8 +503,36 @@ def export_cubemap(
                 "tvec": tvec_face,
                 "camera_id": face_camera_ids[face_name],
                 "name": face_name_file,
+                "points2D": [],
             }
+            erp_to_faces.setdefault(img_id, []).append(
+                (face_name, img_id_counter)
+            )
             img_id_counter += 1
+
+    # ------------------------------------------------------------------
+    # Project 3D points into the cubemap faces to build tracks
+    # ------------------------------------------------------------------
+    # Each point is re-projected into the faces of every ERP image that
+    # originally observed it. This preserves visibility while producing a fully
+    # linked model (images <-> points2D <-> points3D tracks).
+    for pt in tqdm(points3D.values(), desc="Building tracks"):
+        xyz = pt["xyz"]
+        pt["track_out"] = []
+        for erp_img_id, _ in pt.get("track", []):
+            for _, out_img_id in erp_to_faces.get(erp_img_id, []):
+                face_img = output_images[out_img_id]
+                R_face = qvec2rotmat(face_img["qvec"])
+                p_cam = R_face @ xyz + face_img["tvec"]
+                if p_cam[2] <= 0:
+                    continue
+                u = fx_face * p_cam[0] / p_cam[2] + cx_face
+                v = fy_face * p_cam[1] / p_cam[2] + cy_face
+                if not (0.0 <= u < face_size and 0.0 <= v < face_size):
+                    continue
+                point2D_idx = len(face_img["points2D"])
+                face_img["points2D"].append((u, v, pt["id"]))
+                pt["track_out"].append((out_img_id, point2D_idx))
 
     # ------------------------------------------------------------------
     # Write output model
