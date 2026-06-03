@@ -205,4 +205,108 @@ void EssentialMatrixEightPointEstimator::Residuals(
   ComputeSquaredSampsonError(cam_rays1, cam_rays2, E, residuals);
 }
 
+namespace {
+
+// Run the standard 8-point algorithm on normalized bearing vectors and
+// denormalize the resulting essential matrix.
+Eigen::Matrix3d EstimateAndDenormalize(
+    const std::vector<Eigen::Vector3d>& rays1,
+    const std::vector<Eigen::Vector3d>& rays2,
+    const Eigen::DiagonalMatrix<double, 3>& N) {
+  // Normalize bearing vectors.
+  std::vector<Eigen::Vector3d> norm_rays1;
+  std::vector<Eigen::Vector3d> norm_rays2;
+  norm_rays1.reserve(rays1.size());
+  norm_rays2.reserve(rays2.size());
+  for (size_t i = 0; i < rays1.size(); ++i) {
+    norm_rays1.push_back(N * rays1[i]);
+    norm_rays2.push_back(N * rays2[i]);
+  }
+
+  // Standard 8-PA on normalized vectors.
+  Eigen::Matrix<double, Eigen::Dynamic, 9> A(norm_rays1.size(), 9);
+  for (size_t i = 0; i < norm_rays1.size(); ++i) {
+    A.row(i) << norm_rays2[i].x() * norm_rays1[i].transpose(),
+        norm_rays2[i].y() * norm_rays1[i].transpose(),
+        norm_rays2[i].z() * norm_rays1[i].transpose();
+  }
+
+  Eigen::Matrix3d E_hat;
+  if (norm_rays1.size() == 8) {
+    Eigen::Matrix<double, 9, 9> QQ =
+        A.transpose().householderQr().householderQ();
+    E_hat = Eigen::Map<const Eigen::Matrix<double, 3, 3, Eigen::RowMajor>>(
+        QQ.col(8).data());
+  } else {
+    Eigen::JacobiSVD<Eigen::Matrix<double, Eigen::Dynamic, 9>> svd(
+        A, Eigen::ComputeFullV);
+    E_hat = Eigen::Map<const Eigen::Matrix<double, 3, 3, Eigen::RowMajor>>(
+        svd.matrixV().col(8).data());
+  }
+
+  // Enforce rank-2 constraint.
+  Eigen::JacobiSVD<Eigen::Matrix3d> svd(
+      E_hat, Eigen::ComputeFullU | Eigen::ComputeFullV);
+  Eigen::Vector3d singular_values = svd.singularValues();
+  singular_values(2) = 0.0;
+  E_hat = svd.matrixU() * singular_values.asDiagonal() *
+          svd.matrixV().transpose();
+
+  // Denormalize: E = N^T * E_hat * N.
+  return N * E_hat * N;
+}
+
+}  // namespace
+
+void EssentialMatrixSphericalEightPointEstimator::Estimate(
+    const std::vector<X_t>& cam_rays1,
+    const std::vector<Y_t>& cam_rays2,
+    std::vector<M_t>* models) {
+  THROW_CHECK_EQ(cam_rays1.size(), cam_rays2.size());
+  THROW_CHECK_GE(cam_rays1.size(), 8);
+  THROW_CHECK(models != nullptr);
+
+  models->clear();
+
+  // Grid search over spherical normalization parameters S and K.
+  // S controls XY expansion, K controls Z expansion.
+  const std::array<double, 3> kScaleCandidates = {0.5, 1.0, 2.0};
+
+  Eigen::Matrix3d best_E;
+  double best_score = std::numeric_limits<double>::max();
+
+  for (const double S : kScaleCandidates) {
+    for (const double K : kScaleCandidates) {
+      const Eigen::DiagonalMatrix<double, 3> N(
+          Eigen::Vector3d(S, S, K));
+      const Eigen::Matrix3d E =
+          EstimateAndDenormalize(cam_rays1, cam_rays2, N);
+
+      // Score using sum of squared Sampson errors.
+      std::vector<double> residuals;
+      ComputeSquaredSampsonError(cam_rays1, cam_rays2, E, &residuals);
+      double score = 0.0;
+      for (const double r : residuals) {
+        score += r;
+      }
+
+      if (score < best_score) {
+        best_score = score;
+        best_E = E;
+      }
+    }
+  }
+
+  models->resize(1);
+  (*models)[0] = best_E;
+}
+
+void EssentialMatrixSphericalEightPointEstimator::Residuals(
+    const std::vector<X_t>& cam_rays1,
+    const std::vector<Y_t>& cam_rays2,
+    const M_t& E,
+    std::vector<double>* residuals) {
+  ComputeSquaredSampsonError(cam_rays1, cam_rays2, E, residuals);
+}
+
 }  // namespace colmap

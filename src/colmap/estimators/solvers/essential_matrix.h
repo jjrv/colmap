@@ -123,4 +123,48 @@ class EssentialMatrixEightPointEstimator {
                         std::vector<double>* residuals);
 };
 
+// Spherical normalized 8-point essential matrix estimator for 360-FoV cameras.
+//
+// This algorithm improves the classic 8-PA for spherical cameras by applying
+// a non-rigid normalization N = diag(S, S, K) to bearing vectors before DLT,
+// then denormalizing the result. The optimal S and K are found via grid search
+// over the normalized epipolar constraint residuals.
+//
+// Based on: Solarte et al., "Redesigning the Normalized 8-point Algorithm for
+// 360-FoV Images", ICRA 2021.
+class EssentialMatrixSphericalEightPointEstimator {
+ public:
+  using X_t = Eigen::Vector3d;
+  using Y_t = Eigen::Vector3d;
+  using M_t = Eigen::Matrix3d;
+
+  // The minimum number of samples needed to estimate a model.
+  static const int kMinNumSamples = 8;
+
+  // Estimate essential matrix from corresponding camera rays using spherical
+  // normalization. The best S and K parameters are selected via grid search.
+  //
+  // @param cam_rays1  First set of corresponding rays.
+  // @param cam_rays2  Second set of corresponding rays.
+  //
+  // @return           Single solution as a vector of 3x3 essential matrices.
+  static void Estimate(const std::vector<X_t>& cam_rays1,
+                       const std::vector<Y_t>& cam_rays2,
+                       std::vector<M_t>* models);
+
+  // Calculate the residuals of a set of corresponding rays and a given
+  // essential matrix.
+  //
+  // Residuals are defined as the squared Sampson error.
+  //
+  // @param cam_rays1  First set of corresponding rays.
+  // @param cam_rays2  Second set of corresponding rays.
+  // @param E          3x3 essential matrix.
+  // @param residuals  Output vector of residuals.
+  static void Residuals(const std::vector<X_t>& cam_rays1,
+                        const std::vector<Y_t>& cam_rays2,
+                        const M_t& E,
+                        std::vector<double>* residuals);
+};
+
 }  // namespace colmap

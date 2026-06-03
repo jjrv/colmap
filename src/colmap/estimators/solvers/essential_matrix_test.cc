@@ -128,5 +128,30 @@ INSTANTIATE_TEST_SUITE_P(EssentialMatrixEightPointEstimator,
                          EssentialMatrixEightPointEstimatorTests,
                          ::testing::Values(8, 64, 1024));
 
+class EssentialMatrixSphericalEightPointEstimatorTests
+    : public ::testing::TestWithParam<size_t> {};
+
+TEST_P(EssentialMatrixSphericalEightPointEstimatorTests, Nominal) {
+  const size_t kNumRays = GetParam();
+  for (size_t k = 0; k < 1; ++k) {
+    const Rigid3d cam2_from_cam1(Eigen::Quaterniond::UnitRandom(),
+                                 Eigen::Vector3d::Random());
+    Eigen::Matrix3d expected_E = EssentialMatrixFromPose(cam2_from_cam1);
+    std::vector<Eigen::Vector3d> rays1;
+    std::vector<Eigen::Vector3d> rays2;
+    RandomEpipolarCorrespondences(cam2_from_cam1, kNumRays, rays1, rays2);
+
+    EssentialMatrixSphericalEightPointEstimator estimator;
+    std::vector<Eigen::Matrix3d> models;
+    estimator.Estimate(rays1, rays2, &models);
+
+    ExpectAtLeastOneValidModel(estimator, rays1, rays2, expected_E, models);
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(EssentialMatrixSphericalEightPointEstimator,
+                         EssentialMatrixSphericalEightPointEstimatorTests,
+                         ::testing::Values(8, 64, 1024));
+
 }  // namespace
 }  // namespace colmap
